@@ -1,0 +1,103 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <string>
+
+// ====== Custom UUIDs (must match your Web Bluetooth client) ======
+// Service UUID
+#define SERVICE_UUID              "12345678-1234-1234-1234-1234567890ab"
+// Characteristic for ESP32 -> Client (notifications)
+#define TX_CHARACTERISTIC_UUID    "abcd1234-5678-90ab-cdef-1234567890ab"
+// Characteristic for Client -> ESP32 (writes)
+#define RX_CHARACTERISTIC_UUID    "abcd1234-5678-90ab-cdef-1234567890ac"
+
+// Pointers for BLE server and characteristics
+BLEServer* pServer = nullptr;
+BLECharacteristic* pTxChar = nullptr; // notify characteristic
+BLECharacteristic* pRxChar = nullptr; // write characteristic
+bool deviceConnected = false;         // track client connection state
+
+// ====== Server Connection Callbacks ======
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* server) override {
+    deviceConnected = true;
+    Serial.println("✅ Client connected");
+  }
+  void onDisconnect(BLEServer* server) override {
+    deviceConnected = false;
+    Serial.println("❌ Client disconnected");
+    // Resume advertising so new clients can connect
+    server->getAdvertising()->start();
+  }
+};
+
+// ====== RX Characteristic Callback ======
+// Handles incoming data written by the client
+class RxCallback : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pCharacteristic) override {
+    // Read value and convert to std::string for easy handling
+    std::string v = std::string(pCharacteristic->getValue().c_str());
+    if (!v.empty()) {
+      Serial.print("📥 RX from client: ");
+      Serial.println(v.c_str());
+
+      // Echo back the message to prove bidirectional communication
+      std::string echo = "[ESP32 echo] " + v;
+      pTxChar->setValue((uint8_t*)echo.data(), echo.size());
+      pTxChar->notify();
+      Serial.print("📤 Notified: ");
+      Serial.println(echo.c_str());
+    }
+  }
+};
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("\nStarting ESP32 BLE (duplex-feel, notify+write)...");
+
+  // Initialize BLE and create server
+  BLEDevice::init("ESP32-BLE-Server"); // device name shown in scans
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create BLE Service
+  BLEService* pService = pServer->createService(SERVICE_UUID);
+
+  // TX Characteristic (ESP32 -> Client, notifications)
+  pTxChar = pService->createCharacteristic(
+    TX_CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pTxChar->addDescriptor(new BLE2902()); // CCCD so client can enable notify
+
+  // RX Characteristic (Client -> ESP32, write and write without response)
+  pRxChar = pService->createCharacteristic(
+    RX_CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
+  );
+  pRxChar->setCallbacks(new RxCallback());
+
+  // Start the service
+  pService->start();
+
+  // Advertise service so client can discover and connect
+  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  BLEDevice::startAdvertising();
+
+  Serial.println("🚀 Advertising. Ready to connect.");
+}
+
+void loop() {
+  // Periodically send a heartbeat message to connected client
+  static unsigned long lastSend = 0;
+  if (deviceConnected && (millis() - lastSend > 5000)) {
+    lastSend = millis();
+    const char* message = "Hello from ESP32!";
+    pTxChar->setValue((uint8_t*)message, strlen(message));
+    pTxChar->notify(); // send notify to client
+    Serial.printf("📤 Periodic notify: %s\n", message);
+  }
+}
