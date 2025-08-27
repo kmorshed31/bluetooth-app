@@ -34,7 +34,7 @@
   <pre id="log"></pre>
 
 <script>
-// Must match your ESP32 sketch UUIDs
+// Must match ESP32 sketch UUID
 const SERVICE_UUID           = '12345678-1234-1234-1234-1234567890ab';
 const TX_CHARACTERISTIC_UUID = 'abcd1234-5678-90ab-cdef-1234567890ab'; // ESP32->Browser (Notify)
 const RX_CHARACTERISTIC_UUID = 'abcd1234-5678-90ab-cdef-1234567890ac'; // Browser->ESP32 (Write)
@@ -50,6 +50,7 @@ function dec(b){ return new TextDecoder().decode(b); }
 
 async function connect(){
   try{
+    
     device = await navigator.bluetooth.requestDevice({
       filters: [{ services:[SERVICE_UUID] }],
       optionalServices:[SERVICE_UUID]
